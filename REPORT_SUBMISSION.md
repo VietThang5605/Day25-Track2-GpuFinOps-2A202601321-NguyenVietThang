@@ -1,7 +1,6 @@
 # Báo Cáo Kỹ Thuật: Tối Ưu Hóa Chi Phí GPU (GPU FinOps Optimization Report)
-**Đơn vị:** NimbusAI Inc. · **Bộ phận:** AI Infrastructure & FinOps  
-**Tác giả:** FinOps Engineer (Lab 25 — AICB Phase 2 Track 2)  
-**Ngày lập:** Tháng 6/2026  
+**Học viên:** Nguyễn Việt Thắng
+**Mã sinh viên:** 2A202601321
 **Trạng thái hệ thống:** 11/11 Automated Checks Passed · 15/15 Pytest Passed  
 
 ---

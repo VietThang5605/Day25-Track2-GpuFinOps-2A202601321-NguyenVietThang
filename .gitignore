@@ -5,3 +5,5 @@ __pycache__/
 venv/
 outputs/*
 !outputs/.gitkeep
+.DS_Store
+
