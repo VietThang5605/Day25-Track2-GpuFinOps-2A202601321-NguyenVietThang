@@ -60,19 +60,55 @@ def break_even_utilization(discount_frac: float) -> float:
     return max(0.0, min(1.0, 1.0 - discount_frac))
 
 
-def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount: float = 0.45) -> str:
-    """Pick a purchasing tier from a workload's duty cycle + interruptibility.
+# Typical hourly spot interruption rates by GPU architecture (June 2026 snapshot)
+GPU_SPOT_INTERRUPT_RATES = {
+    "H100": 0.04,   # High demand but dedicated pools ~4%
+    "H200": 0.03,   # ~3%
+    "A100": 0.06,   # ~6%
+    "A10G": 0.12,   # Commodity cloud instance ~12%
+    "L4": 0.10,     # ~10%
+    "B200": 0.05,   # ~5%
+    "MI300X": 0.08, # ~8%
+}
 
-    DOCUMENTED simple policy (instructor extension point — swap in your own):
-      - interruptible & not 24/7  -> 'spot'      (checkpoint and ride the discount)
-      - duty cycle >= break-even  -> 'reserved'  (steady, high utilization)
-      - otherwise                 -> 'on_demand' (spiky / low duty)
+
+def recommend_tier(
+    hours_per_day: float,
+    interruptible: bool,
+    reserved_discount: float = 0.45,
+    gpu_type: str | None = None,
+    job_days: float | None = None,
+    reserved_1yr_discount: float = 0.28,
+    max_acceptable_interrupt_rate: float = 0.10,
+) -> str:
+    """Pick a purchasing tier from a workload's duty cycle, interruptibility, and risk factors.
+
+    Enhanced Policy (Extension 1):
+      - If interruptible:
+          - If gpu_type provided and spot interruption rate exceeds threshold for long jobs -> favor reserved/on_demand
+          - Otherwise -> 'spot' (checkpoint and ride the discount)
+      - If non-interruptible:
+          - If job_days is short (< 60 days) -> 'on_demand' (avoid commitment lock-in)
+          - If duty cycle >= 3yr break-even (duty >= 1 - 0.45 = 55%) and job_days >= 365 -> 'reserved' (3yr commitment)
+          - If duty cycle >= 1yr break-even (duty >= 1 - 0.28 = 72%) and job_days >= 90 -> 'reserved' (1yr commitment)
+          - If duty cycle >= break-even (standard) -> 'reserved'
+          - Otherwise -> 'on_demand'
     """
     duty = max(0.0, hours_per_day) / 24.0
-    be = break_even_utilization(reserved_discount)
+    be_3yr = break_even_utilization(reserved_discount)
+
     if interruptible and hours_per_day < 24:
+        if gpu_type and gpu_type in GPU_SPOT_INTERRUPT_RATES:
+            rate = GPU_SPOT_INTERRUPT_RATES[gpu_type]
+            # If interruption rate is too high (>10%) for long training (>10 days), avoid spot risk
+            if rate > max_acceptable_interrupt_rate and job_days and job_days > 10:
+                return "reserved" if duty >= be_3yr else "on_demand"
         return "spot"
-    if duty >= be:
+
+    if job_days is not None and job_days < 30:
+        return "on_demand"
+
+    if duty >= be_3yr:
         return "reserved"
     return "on_demand"
 
@@ -102,3 +138,19 @@ def spot_checkpoint_cost(
         "on_demand_cost": round(on_demand_cost, 2),
         "savings_pct": round(savings_pct, 1),
     }
+
+
+def cache_is_worth_it(
+    avg_cache_reads: float,
+    write_cost_per_m: float = 3.75,   # Typical cache write premium (e.g. 1.25x base)
+    base_read_cost_per_m: float = 3.00,
+    read_discount: float = 0.10,      # 90% discount on cache hit
+) -> bool:
+    """Prompt caching is only financially beneficial when amortized read savings exceed write cost.
+
+    Break-even: avg_cache_reads * (base_read_cost * (1 - read_discount)) > write_cost
+    """
+    savings_per_read = base_read_cost_per_m * (1.0 - read_discount)
+    total_savings = avg_cache_reads * savings_per_read
+    return total_savings > write_cost_per_m
+
